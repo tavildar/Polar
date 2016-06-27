@@ -124,7 +124,7 @@ Bugs and support
 
 **Bugs:** please report to my last name (same as github ID) at google's email service. 
 
-**Support:** same as above but I am not sure how much support I will be able to provide. The code is provided as is without any warranty (implicit or explicit) and guarantee of correctness. 
+**Support:** same as above but I am not sure how much support I will be able to provide. The code is provided as is without any warranty (implicit or explicit) and without guarantee of correctness. 
 
 References
 ---------

@@ -122,9 +122,9 @@ The key code is in class PolarCode (C and MATLAB). The interface to this class i
 Bugs and support
 ------
 
-**Bugs:** please report to my last name (same as github ID) at google's email service. 
+The PolarC code will not compile with libstdc++. The code only works with libc++.
 
-**Support:** same as above but I am not sure how much support I will be able to provide. The code is provided as is without any warranty (implicit or explicit) and without guarantee of correctness. 
+The code is provided as is without any warranty (implicit or explicit) and without guarantee of correctness. 
 
 References
 ---------

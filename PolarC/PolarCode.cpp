@@ -9,6 +9,8 @@
 #include <fstream>
 #include <iomanip>      // std::setprecision
 #include <random>
+#include <algorithm>
+#include <chrono>
 
 
 

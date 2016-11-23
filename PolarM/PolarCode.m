@@ -42,7 +42,14 @@ classdef PolarCode < handle
         % CRC
         crc_matrix;
         crc_size;
-                
+        
+        %code construction
+        cc_method;
+        cc_parameter;
+        cc_misc;
+        
+        %
+        info_bit_order
     end
     
     methods
@@ -69,15 +76,191 @@ classdef PolarCode < handle
             obj.bit_reversed_order = bitrevorder((1:obj.block_length)');
             
             channels = PolarCode.calculate_channel_polarization(design_epsilon, obj.n );
-            [~, info_bits] = sort(channels(obj.bit_reversed_order), 'ascend');
-            
+            channels = channels(obj.bit_reversed_order);
+            [~, info_bits_sorted] = sort(channels, 'ascend');
+            obj.info_bit_order = info_bits_sorted(obj.block_length:-1:1);
             obj.frozen_bits = ones(1,obj.block_length);
-            obj.frozen_bits(info_bits(1:obj.info_length + obj.crc_size)) = 0;
-            obj.info_bits = info_bits(1:obj.info_length + obj.crc_size);
+            obj.frozen_bits(info_bits_sorted(1:obj.info_length + obj.crc_size)) = 0;
+            obj.info_bits = info_bits_sorted(1:obj.info_length + obj.crc_size);
             obj.llr_based_computation = 0;
             
+            obj.cc_method = 'bhattacharya';
+            obj.cc_parameter = design_epsilon;
+            obj.cc_misc = '';
+            
+            disp(['Bhattacharya code construction done. BLER estimate:', num2str(sum(channels(obj.info_bits)))]);
+            
         end
+        
+        function monte_carlo_code_construction(obj, design_snr_db, num_runs, constellation_name, receiver_algo)
+            if (nargin < 3) || isempty(num_runs)
+                num_runs = 100e3;
+            end
+            if (nargin < 4) || isempty(constellation_name)
+                constellation_name = 'bpsk';
+            end
+            if (nargin < 5) || isempty(receiver_algo)
+                receiver_algo = 'bicm';
+            end
+            
+            
+            obj.cc_method = 'monte-carlo';
+            obj.cc_parameter = design_snr_db;
+            obj.cc_misc = [constellation_name, '_', receiver_algo, '_', num2str(num_runs)];
+            
+            txt_file_name = ['CodeConstructionData/MC_block_length_', obj.get_unique_string(), '.txt'];
+            
+            if exist(txt_file_name, 'file')
+                channels = load(txt_file_name);
+                disp(['Found monte carlo BER pattern: ', txt_file_name]);
+            else
+                disp(['Didnt find monte carlo BER here: ', txt_file_name]);
+                disp('Hence, determining the  monte carlo ber.');
+                channels = obj.monte_carlo(design_snr_db, num_runs, constellation_name, receiver_algo);
+                fileID = fopen(txt_file_name,'w');
+                for c  = channels
+                    fprintf(fileID,'%d \n',c);
+                end
+                fclose(fileID);
+            end
+            [~, channel_order] = sort(channels, 'ascend');
+            if channels(channel_order(obj.info_length + obj.crc_size)) < 100
+                disp('Warning: not enough runs to get a reliable code.');
+                disp(['Worst # of errors = ', num2str(channels(channel_order(obj.info_length + obj.crc_size)))]);
+            end
+            
+            obj.info_bits = channel_order(1:obj.info_length + obj.crc_size);
+            
+            obj.frozen_bits = ones(1,obj.block_length);
+            obj.frozen_bits(obj.info_bits) = 0;
+            bler_estimate = sum(channels(obj.info_bits))/num_runs;
+            
+            
+            disp(['Monte carlo code construction done. Bler estimate = ', num2str(bler_estimate)]);
+            
+        end
+        
+        function num_err = monte_carlo(obj, design_snr_db, num_runs, constellation_name, receiver)
+            
+            num_err = zeros(obj.block_length, 1);
+            modulation = Constellation(constellation_name);
+            
+            for i_run  = 1 : num_runs
+                if mod(i_run, ceil(num_runs/10)) == 1
+                    disp(['Code construction iteration running = ', num2str(i_run)]);
+                end
+                if strcmp(receiver, 'bicm')
+                    
+                    dummy_info = (rand(1, obj.block_length) < 0.5);
+                    dummy_coded = PolarCode.polar_encode(dummy_info);
+                    
+                elseif strcmp(receiver, 'mlc')
+                    
+                    num_codes = modulation.n_bits;
+                    dummy_info = (rand(num_codes, obj.block_length/num_codes) < 0.5);
+                    dummy_coded = zeros(obj.block_length, 1);
+                    for layer = 1 : num_codes
+                        dummy_coded(layer:num_codes:obj.block_length) = PolarCode.polar_encode(dummy_info(layer,:))';
+                    end
+                    
+                end
                 
+                mod_sym = modulation.modulate(dummy_coded);
+                sigma = sqrt(1/2) *  10^(-design_snr_db/20);
+                noise = sigma * randn(length(mod_sym), 1);
+                y = mod_sym + noise;
+                
+                if strcmp(receiver, 'bicm')
+                    
+                    p1 = 0.5 * ones(obj.block_length, 1);
+                    eff_block_length = floor(obj.block_length/modulation.n_bits)*modulation.n_bits;
+                    [p1(1:eff_block_length),~] = modulation.compute_llr_bicm(y, sigma^2);
+                    [~, ber_tmp] = PolarCode.polar_decode_monte(p1, dummy_info);
+                    num_err = num_err + ber_tmp';
+                    
+                elseif strcmp(receiver, 'mlc')
+                    
+                    decoded_coded = zeros(obj.block_length/num_codes, num_codes);
+                    ber = zeros(obj.block_length/num_codes, num_codes);
+                    
+                    for layer = 1 : num_codes
+                        u = decoded_coded(:, 1:layer-1);
+                        [p1,~] = modulation.compute_llr_mlc(y, sigma^2, u);
+                        [decoded_coded(:, layer), ber(:, layer)] = PolarCode.polar_decode_monte(p1, dummy_info(layer, :));
+                    end
+                    ber = ber(:);
+                    num_err = num_err + ber;
+                    
+                end
+            end
+        end
+        
+        function [bler_estimate] = ga_code_construction(obj, design_snr_db, constellation_name, receiver_algo)
+            
+            modulation = Constellation(constellation_name);
+            
+            if strcmp(receiver_algo, 'bicm')
+                
+                if modulation.n_bits == 1
+                    capacity = modulation.get_bicm_capacity(design_snr_db);
+                else
+                    capacity = modulation.get_polarized_capacity(design_snr_db);
+                end
+                
+            elseif strcmp(receiver_algo, 'mlc')
+                
+                capacity = modulation.get_mlc_capacity(design_snr_db);
+                
+            end
+            
+            num_codes = modulation.n_bits;
+            
+            mean_llrs = get_bpsk_llr_for_capacity(capacity);
+            
+            llr_vec = zeros(obj.block_length, 1);
+            
+            if modulation.n_bits == 3  && strcmp(receiver_algo, 'mlc') %non power of 2 not supported
+                disp('MLC code construction not supported');
+            else
+                for i_code = 1 : num_codes
+                    bit_loc = (i_code-1) * obj.block_length/num_codes + 1 : i_code * obj.block_length/num_codes;
+                    llr_vec(bit_loc) = mean_llrs(i_code);
+                end
+            end
+            
+            
+            bit_rev_order_subcode = bitrevorder(1:obj.block_length/ num_codes);
+            channels = zeros(obj.block_length, 1);
+            
+            for i_code = 1 : num_codes
+                bit_loc = (i_code-1) * obj.block_length/num_codes + 1 : i_code * obj.block_length/num_codes;
+                tmp_c = calculate_awgn_polarization(llr_vec((bit_loc)).', obj.n - log2(num_codes));
+                channels(bit_loc) = tmp_c(bit_rev_order_subcode);
+            end
+            
+            [~, channel_order] = sort(channels, 'descend');
+            obj.info_bit_order = channel_order(obj.block_length:-1:1);
+            
+            obj.info_bits = channel_order(1:obj.info_length + obj.crc_size);
+            obj.frozen_bits = ones(1,obj.block_length);
+            obj.frozen_bits(obj.info_bits) = 0;
+            bler_estimate =  sum(qfunc(  sqrt(channels(obj.info_bits))/sqrt(2)));
+            
+            obj.cc_method = 'gauss-approx';
+            obj.cc_parameter = design_snr_db;
+            obj.cc_misc = [constellation_name, '_', receiver_algo];
+            
+            disp(['GA code construction done. BLER estimate:', num2str(bler_estimate)]);
+            
+        end
+        
+        
+        function [unique_string] = get_unique_string(obj)
+            unique_string = [num2str(obj.block_length), '_', num2str(length(obj.info_bits)),  ...
+                '_cc_method_', obj.cc_method, '_cc_param_', num2str(obj.cc_parameter), '_', obj.cc_misc];
+        end
+        
+        
         %% encoder
         
         function coded_bits = encode(obj, info_bits)
@@ -597,7 +780,7 @@ classdef PolarCode < handle
         function [ bler, ber ] = get_bler_quick(obj, ebno_vec, list_size_vec)
             
             snr_db_vec = ebno_vec + 10*log10(obj.info_length/obj.block_length);
-
+            
             num_block_err = zeros(length(ebno_vec), length(list_size_vec));
             num_bit_err = zeros(length(ebno_vec), length(list_size_vec));
             num_runs = zeros(length(ebno_vec), length(list_size_vec));
@@ -709,6 +892,66 @@ classdef PolarCode < handle
         function z = vnop(w1,w2) % notation = probability of bit = 1
             z = w1.*w2 ./ (w1.*w2 + (1-w1).*(1-w2));
         end
+        
+        function [x, ber] = polar_decode_monte(y, dummy_info)
+            N = length(y);
+            if (N==1)
+                if (y > 0.5 && dummy_info == 1) || (y <= 0.5 && dummy_info == 0)
+                    ber = 0;
+                else
+                    ber = 1;
+                end
+                x = dummy_info;
+            else
+                u1est = PolarCode.cnop(y(1:2:end),y(2:2:end));
+                [u1hardprev, ber1] = PolarCode.polar_decode_monte(u1est,dummy_info(1:N/2));
+                u2est = PolarCode.vnop(PolarCode.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
+                [u2hardprev, ber2] = PolarCode.polar_decode_monte(u2est,dummy_info(N/2+1:end));
+                ber = [ber1 ber2];
+                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+            end
+        end
+        
+        function [x, u] = polar_decode_capacity(y, dummy_info)
+            N = length(y);
+            if (N==1)
+                u = y;
+                x = dummy_info;
+            else
+                u1est = PolarCode.cnop(y(1:2:end),y(2:2:end));
+                [u1hardprev, u1] = PolarCode.polar_decode_capacity(u1est,dummy_info(1:N/2));
+                u2est = PolarCode.vnop(PolarCode.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
+                [u2hardprev, u2] = PolarCode.polar_decode_capacity(u2est,dummy_info(N/2+1:end));
+                u = [u1 u2];
+                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+            end
+        end
+        
+        
+        function [x, u] = polar_decode_capacity_llr(y, dummy_info)
+            N = length(y);
+            if (N==1)
+                u = y;
+                x = dummy_info;
+            else
+                u1est = PolarCode.cnop_llr(y(1:2:end),y(2:2:end));
+                [u1hardprev, u1] = PolarCode.polar_decode_capacity_llr(u1est,dummy_info(1:N/2));
+                u2est = PolarCode.vnop_llr((1 - 2*u1hardprev').*y(1:2:end),y(2:2:end));
+                [u2hardprev, u2] = PolarCode.polar_decode_capacity_llr(u2est,dummy_info(N/2+1:end));
+                u = [u1 u2];
+                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+            end
+        end
+        
+        
+        function l = cnop_llr(l1,l2)
+            l = 2 * atanh(tanh(l1/2).*tanh(l2/2));
+        end
+        
+        function l = vnop_llr(l1,l2)
+            l = l1 + l2;
+        end
+        
         
         function channels  = calculate_channel_polarization( epsilon, n)
             

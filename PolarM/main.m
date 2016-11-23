@@ -1,7 +1,7 @@
 
 %main m
 clear all;
-n = 11;
+n = 8;
 block_length = 2^n;
 info_length = 2^(n-1);
 crc_size = 0;

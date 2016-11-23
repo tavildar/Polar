@@ -22,7 +22,7 @@ Overview of what is provided
 Decoding performance
 ------
 
-![Alt text](polar_performance.jpeg?raw=true "Performance comparison between PolarC and [Tal] Fig. 1")
+![Alt text](results/polar_performance.jpeg?raw=true "Performance comparison between PolarC and [Tal] Fig. 1")
 
 The figure above shows the performance comparison between PolarC and [Tal](https://arxiv.org/abs/1206.0050) Fig. 1. A close comparison reveals that the performance for CRC aided polar code is about 0.1 dB worse. Note that the two key differences are (i) code construction method (ii) LLR based decoder with hardware-friendly (see [Stimming](https://arxiv.org/abs/1401.3753)) LLR updates for large values of LLRs. 
 

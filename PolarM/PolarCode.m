@@ -530,8 +530,9 @@ classdef PolarCode < handle
                     if mod(phi, 2) == 0
                         if obj.llr_based_computation
                             if max( abs(obj.llr_scl ( p_index_1)), abs(obj.llr_scl ( p_index_2)) ) < 40
-                                obj.llr_scl(p_index_3) = log( (exp( obj.llr_scl ( p_index_1) + obj.llr_scl ( p_index_2)) + 1) ...
-                                    /(exp( obj.llr_scl ( p_index_1))  + exp( obj.llr_scl ( p_index_2))) );
+                                obj.llr_scl(p_index_3) = PolarCode.cnop_llr( obj.llr_scl ( p_index_1), obj.llr_scl ( p_index_2));
+                                % log( (exp( obj.llr_scl ( p_index_1) + obj.llr_scl ( p_index_2)) + 1) ...
+                                %    /(exp( obj.llr_scl ( p_index_1))  + exp( obj.llr_scl ( p_index_2))) );
                             else
                                 obj.llr_scl(p_index_3) = sign( obj.llr_scl ( p_index_1)) * sign(obj.llr_scl ( p_index_2)) * min(abs(obj.llr_scl ( p_index_2)), abs(obj.llr_scl ( p_index_1)));
                             end
